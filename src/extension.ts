@@ -13,6 +13,13 @@ export function activate(context: vscode.ExtensionContext) {
 
         // 这是整个页面的内容
         const doc = editor.document;
+        // 避免在大型二进制/非文本文件上运行（通过检测 NUL 字符）
+        const sample = doc.getText(new vscode.Range(0, 0, Math.min(10, doc.lineCount - 1), 0));
+        if (sample.indexOf('\u0000') !== -1) {
+            vscode.window.showErrorMessage('该文件似乎不是文本文件，已取消操作。');
+            return;
+        }
+
         // 这是被选中的内容
         const selection = editor.selection;
         const hasSelection = !selection.isEmpty;
@@ -23,13 +30,15 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.window.showInformationMessage('当前选中内容或文件为空。');
             return;
         }
-        text = text.trim();
+
+        // 处理 BOM 并统一换行（CRLF -> LF）
+        text = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').trim();
 
         // 输入大小限制，避免超大内容阻塞或 OOM
         const MAX_INPUT_BYTES = 2 * 1024 * 1024; // 2MB
         const byteLen = Buffer.byteLength(text, 'utf8');
         if (byteLen > MAX_INPUT_BYTES) {
-            vscode.window.showErrorMessage(`输入过大：${Math.round(byteLen/1024)} KB，超过限制 ${Math.round(MAX_INPUT_BYTES/1024)} KB，已取消操作。`);
+            vscode.window.showErrorMessage(`输入过大：${Math.round(byteLen / 1024)} KB，超过限制 ${Math.round(MAX_INPUT_BYTES / 1024)} KB，已取消操作。`);
             return;
         }
 
@@ -56,10 +65,10 @@ export function activate(context: vscode.ExtensionContext) {
                 }
                 // 常见反转义（一次替换）
                 const replaced = s.replace(/\\\\/g, '\\')
-                                  .replace(/\\"/g, '"')
-                                  .replace(/\\n/g, '\n')
-                                  .replace(/\\r/g, '\r')
-                                  .replace(/\\t/g, '\t');
+                    .replace(/\\"/g, '"')
+                    .replace(/\\n/g, '\n')
+                    .replace(/\\r/g, '\r')
+                    .replace(/\\t/g, '\t');
                 if (replaced === s) {
                     break;
                 }
@@ -73,13 +82,37 @@ export function activate(context: vscode.ExtensionContext) {
             }
         }
 
+        // 封装超时：如果解析超时返回带 error 的 ParseResult
+        const PARSE_TIMEOUT_MS = 2000;
+        async function parseWithTimeout(input: string): Promise<ParseResult> {
+            return new Promise<ParseResult>(resolve => {
+                // 解析在 next tick 内执行（减少同步阻塞）
+                const doParse = () => {
+                    try {
+                        const r = tryParseFlexible(input, 6);
+                        resolve(r);
+                    } catch (e) {
+                        resolve({ value: null, error: e as Error, finalText: input });
+                    }
+                };
+                const t = setTimeout(() => {
+                    resolve({ value: null, error: new Error('解析超时'), finalText: input });
+                }, PARSE_TIMEOUT_MS);
+                // 执行解析并清理超时定时器
+                Promise.resolve().then(() => {
+                    doParse();
+                    clearTimeout(t);
+                });
+            });
+        }
+
         // 在带进度的异步任务里做解析，避免主线程长时间阻塞
         const parseResult = await vscode.window.withProgress(
             { location: vscode.ProgressLocation.Notification, title: '解析 JSON...', cancellable: false },
             async () => {
                 // 让出一次事件循环，改善 UI 响应（对极端情况有帮助）
                 await new Promise(resolve => setTimeout(resolve, 0));
-                return tryParseFlexible(text, 6);
+                return parseWithTimeout(text);
             }
         );
 
@@ -88,23 +121,25 @@ export function activate(context: vscode.ExtensionContext) {
             const errMsg = parseResult.error?.message || '无法解析为 JSON';
             let detail = errMsg;
             const finalText = parseResult.finalText ?? text;
-            const m = (errMsg || '').match(/position\s+(\d+)/i) || (errMsg || '').match(/at position\s+(\d+)/i);
-            if (m && m[1]) {
-                const idx = Math.max(0, parseInt(m[1], 10));
-                const before = finalText.slice(0, idx);
-                const lines = before.split(/\r\n|\n/);
-                const line = lines.length;
-                const col = (lines[lines.length - 1] || '').length + 1;
-                const previewStart = Math.max(0, idx - 30);
-                const previewEnd = Math.min(finalText.length, idx + 30);
-                const preview = finalText.slice(previewStart, previewEnd).replace(/\r\n/g, '\\n');
-                detail = `${errMsg}（行 ${line} 列 ${col}，片段: ...${preview}...）`;
+            if ((errMsg || '').toLowerCase().includes('超时')) {
+                detail = '解析超时（输入可能过大或存在复杂多重转义），可尝试选中更小范围再试。';
             } else {
-                // 若无法解析位置，给出前后片段
-                const preview = (finalText || text).slice(0, 200).replace(/\r\n/g, '\\n');
-                detail = `${errMsg}（预览前200字符: ${preview}${(finalText || text).length > 200 ? '...' : ''}）`;
+                const m = (errMsg || '').match(/position\s+(\d+)/i) || (errMsg || '').match(/at position\s+(\d+)/i);
+                if (m && m[1]) {
+                    const idx = Math.max(0, parseInt(m[1], 10));
+                    const before = finalText.slice(0, idx);
+                    const lines = before.split(/\n/);
+                    const line = lines.length;
+                    const col = (lines[lines.length - 1] || '').length + 1;
+                    const previewStart = Math.max(0, idx - 30);
+                    const previewEnd = Math.min(finalText.length, idx + 30);
+                    const preview = finalText.slice(previewStart, previewEnd).replace(/\n/g, '\\n');
+                    detail = `${errMsg}（行 ${line} 列 ${col}，片段: ...${preview}...）`;
+                } else {
+                    const preview = (finalText || text).slice(0, 200).replace(/\n/g, '\\n');
+                    detail = `${errMsg}（预览前200字符: ${preview}${(finalText || text).length > 200 ? '...' : ''}）`;
+                }
             }
-            // 使用 showErrorMessage 显示友好信息
             vscode.window.showErrorMessage(`JSON 解析失败：${detail}`);
             return;
         }
