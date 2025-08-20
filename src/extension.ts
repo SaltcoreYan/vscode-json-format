@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
 import * as path from 'path';
 import { Worker } from 'worker_threads';
 
@@ -97,11 +98,20 @@ export function activate(context: vscode.ExtensionContext) {
             }
         }
 
-        // 使用 worker 执行解析，并超时终止。 如果 worker_threads 不可用，就使用本地解析
+        // 使用 worker 解析（优先使用 out 下的编译产物，开发时回退到 src）
         async function parseWithWorker(input: string): Promise<ParseResult> {
-            // 尝试创建 worker，若失败则回退到本地解析
+            const candidates = [
+                path.join(__dirname, 'jsonParserWorker.js'),
+                path.join(context.extensionPath, 'out', 'jsonParserWorker.js'),      // 备用 out 路径
+                path.join(context.extensionPath, 'src', 'jsonParserWorker.js'),      // 开发时直接用 src（未编译）
+                path.join(__dirname, 'jsonParserWorker.ts')
+            ];
+            const workerPath = candidates.find(p => fs.existsSync(p));
+            if (!workerPath) {
+                return { value: null, error: new Error('找不到 jsonParserWorker（请运行 npm run compile）'), finalText: input };
+            }
+
             try {
-                const workerPath = path.join(__dirname, 'jsonParserWorker.js');
                 const worker = new Worker(workerPath);
                 let finished = false;
 
