@@ -10,9 +10,21 @@
     "commands": [
       {
         "command": "json-format.jsonFormat",
-        "title": "json format"
+        "title": "json-format"
       }
-    ]
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "json-format",
+      "properties": {
+        "json-format.maxInputSizeMB": {
+          "type": "number",
+          "default": 2,
+          "minimum": 0,
+          "description": "最大可解析输入大小（单位 MB）。超过该大小将取消解析以避免阻塞/OOM。设置为 0 表示不限制。"
+        }
+      }
+    }
   },
   "scripts": {
     "compile": "tsc -p ./ && node ./scripts/copy-worker.js",

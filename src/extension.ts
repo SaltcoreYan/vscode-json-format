@@ -37,12 +37,19 @@ export function activate(context: vscode.ExtensionContext) {
         // 处理 BOM 并统一换行（CRLF -> LF）
         text = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').trim();
 
-        // 输入大小限制，避免超大内容阻塞或 OOM
-        const MAX_INPUT_BYTES = 2 * 1024 * 1024; // 2MB
-        const byteLen = Buffer.byteLength(text, 'utf8');
-        if (byteLen > MAX_INPUT_BYTES) {
-            vscode.window.showErrorMessage(`输入过大：${Math.round(byteLen / 1024)} KB，超过限制 ${Math.round(MAX_INPUT_BYTES / 1024)} KB，已取消操作。`);
-            return;
+        // 读取用户配置的最大输入大小（MB），默认 2 MB
+        const config = vscode.workspace.getConfiguration('json-format');
+        const maxInputMB = Number(config.get('maxInputSizeMB', 2));
+        // 有效整数并转换为字节；若为 0 则表示不限制
+        const MAX_INPUT_BYTES = (isNaN(maxInputMB) || maxInputMB <= 0) ? 0 : Math.max(0, Math.floor(maxInputMB)) * 1024 * 1024;
+
+        // 输入大小限制，避免超大内容阻塞或 OOM（若 MAX_INPUT_BYTES 为 0 则不限制）
+        if (MAX_INPUT_BYTES > 0) {
+            const byteLen = Buffer.byteLength(text, 'utf8');
+            if (byteLen > MAX_INPUT_BYTES) {
+                vscode.window.showErrorMessage(`输入过大：${Math.round(byteLen / 1024)} KB，超过限制 ${Math.round(MAX_INPUT_BYTES / 1024)} KB，已取消操作。`);
+                return;
+            }
         }
 
         // 定义解析结果的数据类型
