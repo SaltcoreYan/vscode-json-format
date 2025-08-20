@@ -1,8 +1,11 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
+import { Worker } from 'worker_threads';
+
+// worker 执行解析的超时时间
+const WORKER_PARSE_TIMEOUT_MS = 2000
 
 export function activate(context: vscode.ExtensionContext) {
-    console.log('Congratulations, your extension "json-format" is now active!');
-
     const disposable = vscode.commands.registerCommand('json-format.jsonFormat', async () => {
         // 获取打开的编辑器页面
         const editor = vscode.window.activeTextEditor;
@@ -42,12 +45,14 @@ export function activate(context: vscode.ExtensionContext) {
             return;
         }
 
+        // 定义解析结果的数据类型
         type ParseResult = { value: any | null; error?: Error; finalText?: string };
 
-        // 优化解析器：尽量少创建中间字符串，返回最终尝试解析的文本以便报错定位
+        // 本地的解析器
         function tryParseFlexible(input: string, maxDepth = 6): ParseResult {
             let s = input;
             let lastErr: Error | undefined;
+
             for (let i = 0; i < maxDepth; i++) {
                 s = s.trim();
                 // 直接尝试解析对象/数组开头的情况
@@ -59,21 +64,24 @@ export function activate(context: vscode.ExtensionContext) {
                         // 继续尝试反转义
                     }
                 }
+
                 // 去掉外层引号
                 if (/^"(.*)"$/.test(s)) {
                     s = s.slice(1, -1);
                 }
+
                 // 常见反转义（一次替换）
                 const replaced = s.replace(/\\\\/g, '\\')
                     .replace(/\\"/g, '"')
                     .replace(/\\n/g, '\n')
                     .replace(/\\r/g, '\r')
                     .replace(/\\t/g, '\t');
-                if (replaced === s) {
-                    break;
-                }
+
+                if (replaced === s) break;
+
                 s = replaced;
             }
+            
             try {
                 return { value: JSON.parse(s), finalText: s };
             } catch (e) {
@@ -82,45 +90,89 @@ export function activate(context: vscode.ExtensionContext) {
             }
         }
 
-        // 封装超时：如果解析超时返回带 error 的 ParseResult
-        const PARSE_TIMEOUT_MS = 2000;
-        async function parseWithTimeout(input: string): Promise<ParseResult> {
-            return new Promise<ParseResult>(resolve => {
-                // 解析在 next tick 内执行（减少同步阻塞）
-                const doParse = () => {
-                    try {
-                        const r = tryParseFlexible(input, 6);
-                        resolve(r);
-                    } catch (e) {
-                        resolve({ value: null, error: e as Error, finalText: input });
-                    }
-                };
-                const t = setTimeout(() => {
-                    resolve({ value: null, error: new Error('解析超时'), finalText: input });
-                }, PARSE_TIMEOUT_MS);
-                // 执行解析并清理超时定时器
-                Promise.resolve().then(() => {
-                    doParse();
-                    clearTimeout(t);
+        // 使用 worker 执行解析，并超时终止。 如果 worker_threads 不可用，就使用本地解析
+        async function parseWithWorker(input: string): Promise<ParseResult> {
+            // 尝试创建 worker，若失败则回退到本地解析
+            try {
+                const workerPath = path.join(__dirname, 'jsonParserWorker.js');
+                const worker = new Worker(workerPath);
+                let finished = false;
+
+                return await new Promise<ParseResult>((resolve) => {
+                    const timer = setTimeout(() => {
+                        if (finished) return;
+                        finished = true;
+
+                        // 终止 worker
+                        try { worker.terminate(); } catch {  }
+
+                        resolve({ value: null, error: new Error('解析超时'), finalText: input });
+                    }, WORKER_PARSE_TIMEOUT_MS);
+
+                    worker.on('message', (msg: any) => {
+                        if (finished) return;
+                        finished = true;
+                        clearTimeout(timer);
+
+                        // 终止 worker
+                        try { worker.terminate(); } catch {  }
+
+                        if (msg && msg.value !== undefined) {
+                            resolve({ value: msg.value, finalText: msg.finalText ?? input });
+                        } else {
+                            resolve({ value: null, error: new Error(msg && msg.error ? msg.error : '解析失败'), finalText: msg && msg.finalText ? msg.finalText : input });
+                        }
+                    });
+
+                    worker.on('error', (err) => {
+                        if (finished) return;
+                        finished = true;
+                        clearTimeout(timer);
+
+                        try { worker.terminate(); } catch {  }
+                        resolve({ value: null, error: err as Error, finalText: input });
+                    });
+
+                    // 发送输入到 worker（字符串）
+                    worker.postMessage(input);
                 });
-            });
+            } catch (e) {
+                // 在主线程上解析并加超时保护（不会完全中止，但避免等待无限期）
+                return new Promise<ParseResult>(resolve => {
+                    const t = setTimeout(() => {
+                        resolve({ value: null, error: new Error('解析超时（回退）'), finalText: input });
+                    }, WORKER_PARSE_TIMEOUT_MS);
+
+                    Promise.resolve().then(() => {
+                        try {
+                            const r = tryParseFlexible(input, 6);
+                            clearTimeout(t);
+                            resolve(r);
+                        } catch (err) {
+                            clearTimeout(t);
+                            resolve({ value: null, error: err as Error, finalText: input });
+                        }
+                    });
+                });
+            }
         }
 
         // 在带进度的异步任务里做解析，避免主线程长时间阻塞
         const parseResult = await vscode.window.withProgress(
             { location: vscode.ProgressLocation.Notification, title: '解析 JSON...', cancellable: false },
             async () => {
-                // 让出一次事件循环，改善 UI 响应（对极端情况有帮助）
                 await new Promise(resolve => setTimeout(resolve, 0));
-                return parseWithTimeout(text);
+                return parseWithWorker(text);
             }
         );
 
         if (parseResult.value === null) {
-            // 更友好且尽可能精确的错误信息：尝试从错误消息中提取位置并计算行列，给出片段预览
+            // 从错误消息中提取位置并计算行列，给出片段预览
             const errMsg = parseResult.error?.message || '无法解析为 JSON';
+
             let detail = errMsg;
             const finalText = parseResult.finalText ?? text;
+
             if ((errMsg || '').toLowerCase().includes('超时')) {
                 detail = '解析超时（输入可能过大或存在复杂多重转义），可尝试选中更小范围再试。';
             } else {
@@ -147,7 +199,7 @@ export function activate(context: vscode.ExtensionContext) {
         const parsed = parseResult.value;
         const formatted = JSON.stringify(parsed, null, 4);
 
-        // 比较规范化后再决定是否写入，避免不必要的编辑操作
+        // 避免不必要的编辑操作
         const normalize = (str: string) => str.replace(/\r\n/g, '\n').trim();
         if (normalize(formatted) === normalize(text)) {
             vscode.window.showInformationMessage('已是格式化的 JSON，未做修改。');
