@@ -1,5 +1,5 @@
 {
-  "name": "jsonformat",
+  "name": "json-format",
   "displayName": "jsonFormat",
   "description": "",
   "version": "0.0.1",
@@ -9,13 +9,15 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onCommand:json-format.jsonFormat"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "jsonformat.helloWorld",
-        "title": "Hello World"
+        "command": "json-format.jsonFormat",
+        "title": "json format"
       }
     ]
   },
