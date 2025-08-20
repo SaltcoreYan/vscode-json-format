@@ -25,48 +25,91 @@ export function activate(context: vscode.ExtensionContext) {
         }
         text = text.trim();
 
-        // 优化解析器：优先直接解析，看起来像 JSON 直接 parse，否则做有限次反转义尝试
-        function tryParseFlexible(input: string, maxDepth = 6): any | null {
+        // 输入大小限制，避免超大内容阻塞或 OOM
+        const MAX_INPUT_BYTES = 2 * 1024 * 1024; // 2MB
+        const byteLen = Buffer.byteLength(text, 'utf8');
+        if (byteLen > MAX_INPUT_BYTES) {
+            vscode.window.showErrorMessage(`输入过大：${Math.round(byteLen/1024)} KB，超过限制 ${Math.round(MAX_INPUT_BYTES/1024)} KB，已取消操作。`);
+            return;
+        }
+
+        type ParseResult = { value: any | null; error?: Error; finalText?: string };
+
+        // 优化解析器：尽量少创建中间字符串，返回最终尝试解析的文本以便报错定位
+        function tryParseFlexible(input: string, maxDepth = 6): ParseResult {
             let s = input;
+            let lastErr: Error | undefined;
             for (let i = 0; i < maxDepth; i++) {
                 s = s.trim();
-                // 如果以 { 或 [ 开头，直接尝试解析（常见情况优先）
+                // 直接尝试解析对象/数组开头的情况
                 if (/^[\{\[]/.test(s)) {
                     try {
-                        return JSON.parse(s);
-                    } catch {
-                        // 解析失败则继续尝试反转义
+                        return { value: JSON.parse(s), finalText: s };
+                    } catch (e) {
+                        lastErr = e as Error;
+                        // 继续尝试反转义
                     }
                 }
                 // 去掉外层引号
                 if (/^"(.*)"$/.test(s)) {
                     s = s.slice(1, -1);
                 }
-                // 常见反转义（一次性替换，避免大量中间字符串）
+                // 常见反转义（一次替换）
                 const replaced = s.replace(/\\\\/g, '\\')
                                   .replace(/\\"/g, '"')
                                   .replace(/\\n/g, '\n')
                                   .replace(/\\r/g, '\r')
                                   .replace(/\\t/g, '\t');
                 if (replaced === s) {
-                    // 无更多变化，跳出
                     break;
                 }
                 s = replaced;
             }
             try {
-                return JSON.parse(s);
-            } catch {
-                return null;
+                return { value: JSON.parse(s), finalText: s };
+            } catch (e) {
+                lastErr = e as Error;
+                return { value: null, error: lastErr, finalText: s };
             }
         }
 
-        const parsed = tryParseFlexible(text, 6);
-        if (parsed === null) {
-            vscode.window.showErrorMessage('选中的内容或文件不是合法的 JSON。');
+        // 在带进度的异步任务里做解析，避免主线程长时间阻塞
+        const parseResult = await vscode.window.withProgress(
+            { location: vscode.ProgressLocation.Notification, title: '解析 JSON...', cancellable: false },
+            async () => {
+                // 让出一次事件循环，改善 UI 响应（对极端情况有帮助）
+                await new Promise(resolve => setTimeout(resolve, 0));
+                return tryParseFlexible(text, 6);
+            }
+        );
+
+        if (parseResult.value === null) {
+            // 更友好且尽可能精确的错误信息：尝试从错误消息中提取位置并计算行列，给出片段预览
+            const errMsg = parseResult.error?.message || '无法解析为 JSON';
+            let detail = errMsg;
+            const finalText = parseResult.finalText ?? text;
+            const m = (errMsg || '').match(/position\s+(\d+)/i) || (errMsg || '').match(/at position\s+(\d+)/i);
+            if (m && m[1]) {
+                const idx = Math.max(0, parseInt(m[1], 10));
+                const before = finalText.slice(0, idx);
+                const lines = before.split(/\r\n|\n/);
+                const line = lines.length;
+                const col = (lines[lines.length - 1] || '').length + 1;
+                const previewStart = Math.max(0, idx - 30);
+                const previewEnd = Math.min(finalText.length, idx + 30);
+                const preview = finalText.slice(previewStart, previewEnd).replace(/\r\n/g, '\\n');
+                detail = `${errMsg}（行 ${line} 列 ${col}，片段: ...${preview}...）`;
+            } else {
+                // 若无法解析位置，给出前后片段
+                const preview = (finalText || text).slice(0, 200).replace(/\r\n/g, '\\n');
+                detail = `${errMsg}（预览前200字符: ${preview}${(finalText || text).length > 200 ? '...' : ''}）`;
+            }
+            // 使用 showErrorMessage 显示友好信息
+            vscode.window.showErrorMessage(`JSON 解析失败：${detail}`);
             return;
         }
 
+        const parsed = parseResult.value;
         const formatted = JSON.stringify(parsed, null, 4);
 
         // 比较规范化后再决定是否写入，避免不必要的编辑操作
