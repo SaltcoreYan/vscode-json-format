@@ -25,59 +25,75 @@ export function activate(context: vscode.ExtensionContext) {
         }
         text = text.trim();
 
-        let parsed: any;
-        // 尝试多种方式解析可能被转义的 JSON 字符串
-        let s = text;
-        let ok = false;
-        for (let i = 0; i < 4; i++) {
-            try {
-                parsed = JSON.parse(s);
-                // 如果解析得到的是字符串并且看起来像 JSON（以 { 或 [ 开头），继续解析一次
-                if (typeof parsed === 'string' && /^\s*[\{\[]/.test(parsed)) {
-                    s = parsed;
-                    ok = false;
-                    continue;
+        // 优化解析器：优先直接解析，看起来像 JSON 直接 parse，否则做有限次反转义尝试
+        function tryParseFlexible(input: string, maxDepth = 6): any | null {
+            let s = input;
+            for (let i = 0; i < maxDepth; i++) {
+                s = s.trim();
+                // 如果以 { 或 [ 开头，直接尝试解析（常见情况优先）
+                if (/^[\{\[]/.test(s)) {
+                    try {
+                        return JSON.parse(s);
+                    } catch {
+                        // 解析失败则继续尝试反转义
+                    }
                 }
-                ok = true;
-                break;
-            } catch (e) {
-                // 尝试去掉外层引号
-                if (/^".*"$/.test(s)) {
+                // 去掉外层引号
+                if (/^"(.*)"$/.test(s)) {
                     s = s.slice(1, -1);
                 }
-                // 反转义常见的转义序列（将双反斜杠变为单反斜杠，\" => " 等）
-                s = s.replace(/\\\\/g, '\\')
-                     .replace(/\\"/g, '"')
-                     .replace(/\\n/g, '\n')
-                     .replace(/\\r/g, '\r')
-                     .replace(/\\t/g, '\t');
-                // 继续下一轮尝试
+                // 常见反转义（一次性替换，避免大量中间字符串）
+                const replaced = s.replace(/\\\\/g, '\\')
+                                  .replace(/\\"/g, '"')
+                                  .replace(/\\n/g, '\n')
+                                  .replace(/\\r/g, '\r')
+                                  .replace(/\\t/g, '\t');
+                if (replaced === s) {
+                    // 无更多变化，跳出
+                    break;
+                }
+                s = replaced;
+            }
+            try {
+                return JSON.parse(s);
+            } catch {
+                return null;
             }
         }
 
-        if (!ok) {
+        const parsed = tryParseFlexible(text, 6);
+        if (parsed === null) {
             vscode.window.showErrorMessage('选中的内容或文件不是合法的 JSON。');
             return;
         }
 
         const formatted = JSON.stringify(parsed, null, 4);
 
-        await editor.edit(editBuilder => {
-            if (hasSelection) {
-                editBuilder.replace(selection, formatted);
-            } else {
-                const firstLine = doc.lineAt(0);
-                const lastLine = doc.lineAt(doc.lineCount - 1);
-                const fullRange = new vscode.Range(firstLine.range.start, lastLine.range.end);
-                editBuilder.replace(fullRange, formatted);
-            }
-        });
+        // 比较规范化后再决定是否写入，避免不必要的编辑操作
+        const normalize = (str: string) => str.replace(/\r\n/g, '\n').trim();
+        if (normalize(formatted) === normalize(text)) {
+            vscode.window.showInformationMessage('已是格式化的 JSON，未做修改。');
+            return;
+        }
 
-        vscode.window.showInformationMessage('JSON 格式化完成。');
+        try {
+            await editor.edit(editBuilder => {
+                if (hasSelection) {
+                    editBuilder.replace(selection, formatted);
+                } else {
+                    const firstLine = doc.lineAt(0);
+                    const lastLine = doc.lineAt(doc.lineCount - 1);
+                    const fullRange = new vscode.Range(firstLine.range.start, lastLine.range.end);
+                    editBuilder.replace(fullRange, formatted);
+                }
+            }, { undoStopBefore: true, undoStopAfter: true });
+            vscode.window.showInformationMessage('JSON 格式化完成。');
+        } catch (e) {
+            vscode.window.showErrorMessage('写入文档失败：' + (e && (e as Error).message ? (e as Error).message : String(e)));
+        }
     });
 
     context.subscriptions.push(disposable);
 }
 
-// This method is called when your extension is deactivated
 export function deactivate() {}
