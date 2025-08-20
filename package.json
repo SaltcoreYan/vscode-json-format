@@ -3,15 +3,8 @@
   "displayName": "jsonFormat",
   "description": "",
   "version": "0.0.1",
-  "engines": {
-    "vscode": "^1.103.0"
-  },
-  "categories": [
-    "Other"
-  ],
-  "activationEvents": [
-    "onCommand:json-format.jsonFormat"
-  ],
+  "engines": { "vscode": "^1.103.0" },
+  "activationEvents": ["onCommand:json-format.jsonFormat"],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
@@ -22,8 +15,7 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
+    "compile": "tsc -p ./ && node ./scripts/copy-worker.js",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src",
