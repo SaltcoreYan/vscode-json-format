@@ -1,51 +1,24 @@
-# jsonformat README
+# json-format
 
-This is the README for your extension "jsonformat". After writing up a brief description, we recommend including the following sections.
+Format and normalize JSON or JSON-like strings in the editor.
 
-## Features
+Features:
+- Flexible parsing: raw JSON, JSON in escaped strings, multi-layer escapes.
+- Unicode unescaping: restore \uXXXX and surrogate pairs.
+- JSONC tolerant (optional in parser): comments and trailing commas.
+- Fast path for small inputs; worker offloading for large/complex cases.
+- Honors editor indentation (tabSize/insertSpaces) and EOL.
+- Size limit to avoid blocking (configurable).
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+Command:
+- json-format: 格式化 JSON (Default: Ctrl+Alt+J)
 
-For example if there is an image subfolder under your extension project workspace:
+Settings:
+- json-format.maxInputSizeMB (number, default 2): Max input size in MB. 0 = unlimited.
+- json-format.decodeUnicode (boolean, default true): Whether to unescape Unicode sequences.
 
-\!\[feature X\]\(images/feature-x.png\)
-
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
-
-## Requirements
-
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
-
-## Extension Settings
-
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
-
-For example:
-
-This extension contributes the following settings:
-
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
-
-## Known Issues
-
-Calling out known issues can help limit users opening duplicate issues against your extension.
-
-## Release Notes
-
-Users appreciate release notes as you update your extension.
-
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
+Usage:
+- Select a region or run the command on the whole file. The extension parses, decodes, and formats the JSON.
 
 ---
 

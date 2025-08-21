@@ -5,6 +5,11 @@ import { Worker } from 'worker_threads';
 import { deepDecodeUnicode } from './shared/decode';
 import { type ParseResult, tryParseFlexible } from "./shared/parseJson";
 
+// 预编译正则，避免重复创建
+const RE_ERR_POS = /position\s+(\d+)/i;
+const RE_ERR_AT_POS = /at position\s+(\d+)/i;
+const RE_LF = /\n/g;
+
 // worker 执行解析的超时时间
 const WORKER_PARSE_TIMEOUT_MS = 2000;
 // 64KB 内先走主线程快速路径
@@ -22,7 +27,9 @@ export function activate(context: vscode.ExtensionContext) {
         // 这是整个页面的内容
         const doc = editor.document;
         // 避免在大型二进制/非文本文件上运行（通过检测 NUL 字符）
-        const sample = doc.getText(new vscode.Range(0, 0, Math.min(10, doc.lineCount - 1), 0));
+        const lastLineIndex = Math.min(doc.lineCount - 1, 200);
+        const end = lastLineIndex >= 0 ? doc.lineAt(lastLineIndex).range.end : new vscode.Position(0, 0);
+        const sample = doc.getText(new vscode.Range(new vscode.Position(0, 0), end));
         if (sample.indexOf('\u0000') !== -1) {
             vscode.window.showErrorMessage('该文件似乎不是文本文件，已取消操作。');
             return;
@@ -38,42 +45,33 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.window.showInformationMessage('当前选中内容或文件为空。');
             return;
         }
+        // 不再手动处理 BOM/CRLF，仅做 trim
+        text = text.trim();
 
-        // 处理 BOM 并统一换行（CRLF -> LF）
-        text = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').trim();
-
-        // 读取用户配置的最大输入大小（MB），默认 2 MB
+        // 读取配置与输入大小
         const config = vscode.workspace.getConfiguration('json-format');
         const maxInputMB = Number(config.get('maxInputSizeMB', 2));
-        // 有效整数并转换为字节；若为 0 则表示不限制
         const MAX_INPUT_BYTES = (isNaN(maxInputMB) || maxInputMB <= 0) ? 0 : Math.max(0, Math.floor(maxInputMB)) * 1024 * 1024;
 
-        // 输入大小限制，避免超大内容阻塞或 OOM（若 MAX_INPUT_BYTES 为 0 则不限制）
-        if (MAX_INPUT_BYTES > 0) {
-            const byteLen = Buffer.byteLength(text, 'utf8');
-            if (byteLen > MAX_INPUT_BYTES) {
-                vscode.window.showErrorMessage(`输入过大：${Math.round(byteLen / 1024)} KB，超过限制 ${Math.round(MAX_INPUT_BYTES / 1024)} KB，已取消操作。`);
-                return;
-            }
-        }
-        
-        // 快速路径：小输入优先在主线程解析（最多尝试 3 层反转义）
         const sizeBytes = Buffer.byteLength(text, 'utf8');
+        if (MAX_INPUT_BYTES > 0 && sizeBytes > MAX_INPUT_BYTES) {
+            vscode.window.showErrorMessage(`输入过大：${Math.round(sizeBytes / 1024)} KB，超过限制 ${Math.round(MAX_INPUT_BYTES / 1024)} KB，已取消操作。`);
+            return;
+        }
+
+        // 快速路径：小输入优先在主线程解析（最多尝试 3 层反转义）
         let parseResult: ParseResult | null = null;
         if (sizeBytes <= SMALL_INPUT_THRESHOLD) {
             const quick = tryParseFlexible(text, 3);
-            if (quick.value !== null) {
-                parseResult = quick;
-            }
+            if (quick.value !== null) parseResult = quick;
         }
 
         // 如快速路径失败或输入较大，使用 worker
         if (!parseResult) {
-            // 改为只寻找 out 下编译产物，避免误用 .ts
             async function parseWithWorker(input: string, token?: vscode.CancellationToken): Promise<ParseResult> {
-                const workerPath = fs.existsSync(path.join(__dirname, 'jsonParserWorker.js'))
-                    ? path.join(__dirname, 'jsonParserWorker.js')
-                    : path.join(context.extensionPath, 'out', 'jsonParserWorker.js');
+                const primary = path.join(__dirname, 'jsonParserWorker.js');
+                const fallback = path.join(context.extensionPath, 'out', 'jsonParserWorker.js');
+                const workerPath = fs.existsSync(primary) ? primary : fallback;
 
                 if (!fs.existsSync(workerPath)) {
                     return { value: null, error: new Error('找不到 out/jsonParserWorker.js（请运行 npm run compile）'), finalText: input };
@@ -95,12 +93,13 @@ export function activate(context: vscode.ExtensionContext) {
                             cleanup();
                             resolve({ value: null, error: new Error('已取消'), finalText: input });
                         };
-                        token?.onCancellationRequested(onCancel);
+                        const cancelSub = token?.onCancellationRequested(onCancel);
 
                         const timer = setTimeout(() => {
                             if (finished) return;
                             finished = true;
                             cleanup();
+                            cancelSub?.dispose(); // 释放订阅
                             resolve({ value: null, error: new Error('解析超时'), finalText: input });
                         }, WORKER_PARSE_TIMEOUT_MS);
 
@@ -109,6 +108,7 @@ export function activate(context: vscode.ExtensionContext) {
                             finished = true;
                             clearTimeout(timer);
                             cleanup();
+                            cancelSub?.dispose(); // 释放订阅
                             if (msg && msg.value !== undefined) {
                                 resolve({ value: msg.value, finalText: msg.finalText ?? input });
                             } else {
@@ -121,6 +121,7 @@ export function activate(context: vscode.ExtensionContext) {
                             finished = true;
                             clearTimeout(timer);
                             cleanup();
+                            cancelSub?.dispose(); // 释放订阅
                             resolve({ value: null, error: err as Error, finalText: input });
                         });
 
@@ -149,7 +150,7 @@ export function activate(context: vscode.ExtensionContext) {
             parseResult = await vscode.window.withProgress(
                 { location: vscode.ProgressLocation.Notification, title: '解析 JSON...', cancellable: true },
                 async (_progress, token) => {
-                    await new Promise(resolve => setTimeout(resolve, 0));
+                    await new Promise(r => setTimeout(r, 0));
                     return parseWithWorker(text, token);
                 }
             );
@@ -165,7 +166,7 @@ export function activate(context: vscode.ExtensionContext) {
             if ((errMsg || '').toLowerCase().includes('超时')) {
                 detail = '解析超时（输入可能过大或存在复杂多重转义），可尝试选中更小范围再试。';
             } else {
-                const m = (errMsg || '').toLowerCase().match(/position\s+(\d+)/i) || (errMsg || '').toLowerCase().match(/at position\s+(\d+)/i);
+                const m = (RE_ERR_POS.exec(errMsg) || RE_ERR_AT_POS.exec(errMsg));
                 if (m && m[1]) {
                     const idx = Math.max(0, parseInt(m[1], 10));
                     const before = finalText.slice(0, idx);
@@ -174,10 +175,10 @@ export function activate(context: vscode.ExtensionContext) {
                     const col = (lines[lines.length - 1] || '').length + 1;
                     const previewStart = Math.max(0, idx - 30);
                     const previewEnd = Math.min(finalText.length, idx + 30);
-                    const preview = finalText.slice(previewStart, previewEnd).replace(/\n/g, '\\n');
+                    const preview = finalText.slice(previewStart, previewEnd).replace(RE_LF, '\\n');
                     detail = `${errMsg}（行 ${line} 列 ${col}，片段: ...${preview}...）`;
                 } else {
-                    const preview = (finalText || text).slice(0, 200).replace(/\n/g, '\\n');
+                    const preview = (finalText || text).slice(0, 200).replace(RE_LF, '\\n');
                     detail = `${errMsg}（预览前200字符: ${preview}${(finalText || text).length > 200 ? '...' : ''}）`;
                 }
             }
@@ -199,10 +200,8 @@ export function activate(context: vscode.ExtensionContext) {
 
         // 用编辑器缩进格式化
         let formatted = JSON.stringify(outputObj, null, indent);
-
-        // 将换行规范为文档 EOL
         if (eolStr === '\r\n') {
-            formatted = formatted.replace(/\n/g, '\r\n');
+            formatted = formatted.replace(RE_LF, '\r\n');
         }
 
         // 若需要按设置补尾行换行（可选）
