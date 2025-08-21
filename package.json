@@ -1,11 +1,21 @@
 {
   "name": "json-format",
   "displayName": "jsonFormat",
-  "description": "",
+  "description": "Format and normalize JSON/JSON-like content",
   "version": "0.0.1",
-  "engines": { "vscode": "^1.103.0" },
-  "categories": ["Formatters"],
-  "activationEvents": ["onCommand:json-format.jsonFormat"],
+  "icon": "images/icon.png",
+  "publisher": "saltcoreyan",
+  "license": "SEE LICENSE IN LICENSE",
+  "author": {
+    "name": "SaltcoreYan",
+    "url": "https://github.com/SaltcoreYan"
+  },
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Formatters"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
@@ -42,14 +52,20 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile && npm run lint",
-    "lint": "eslint src",
+    "package": "vsce package",
+    "publish:patch": "vsce publish patch",
+    "publish:minor": "vsce publish minor",
+    "publish:major": "vsce publish major",
     "test": "vscode-test"
+  },
+  "dependencies": {
+    "jsonc-parser": "^3.3.0"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
+    "@types/vscode": "^1.103.0",
+    "@vscode/vsce": "^3.0.0",
     "typescript": "^5.9.2"
-  },
-  "dependencies": {}
+  }
 }
