@@ -1,5 +1,4 @@
 import { parentPort } from 'worker_threads';
-import { deepDecodeUnicode } from './shared/decode';
 import { tryParseFlexible } from './shared/parseJson';
 
 //  worker 里解析json
@@ -8,7 +7,7 @@ parentPort?.on('message', (input: string) => {
         const result = tryParseFlexible(input, 6);
         if (result.value !== null) {
             parentPort!.postMessage({
-                value: deepDecodeUnicode(result.value),
+                value: result.value,           // 不再 deepDecodeUnicode
                 finalText: result.finalText ?? input
             });
         } else {

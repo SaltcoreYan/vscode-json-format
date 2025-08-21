@@ -25,7 +25,12 @@
           "type": "number",
           "default": 2,
           "minimum": 0,
-          "description": "最大可解析输入大小（单位 MB）。超过该大小将取消解析以避免阻塞/OOM。设置为 0 表示不限制。"
+          "description": "最大可解析输入大小（MB）。0 表示不限制。"
+        },
+        "json-format.decodeUnicode": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否将字符串中的 Unicode 转义还原。"
         }
       }
     }
