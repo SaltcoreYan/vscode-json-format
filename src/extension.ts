@@ -185,11 +185,31 @@ export function activate(context: vscode.ExtensionContext) {
             return;
         }
 
-        // Unicode 还原
+        // 读取编辑器缩进/EOL
+        const editorOpts = editor.options;
+        const useSpaces = editorOpts.insertSpaces === true;
+        const tabSize = Number(editorOpts.tabSize) > 0 ? Number(editorOpts.tabSize) : 4;
+        const indent: string | number = useSpaces ? tabSize : '\t';
+        const eolStr = doc.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n';
+
+        // 仅在主线程做一次 Unicode 还原
         const cfg = vscode.workspace.getConfiguration('json-format');
         const enableDecode = cfg.get<boolean>('decodeUnicode', true);
         const outputObj = enableDecode ? deepDecodeUnicode(parseResult.value) : parseResult.value;
-        const formatted = JSON.stringify(outputObj, null, 4); // 用还原后的结果输出
+
+        // 用编辑器缩进格式化
+        let formatted = JSON.stringify(outputObj, null, indent);
+
+        // 将换行规范为文档 EOL
+        if (eolStr === '\r\n') {
+            formatted = formatted.replace(/\n/g, '\r\n');
+        }
+
+        // 若需要按设置补尾行换行（可选）
+        const insertFinalNewline = vscode.workspace.getConfiguration('files').get<boolean>('insertFinalNewline', false);
+        if (insertFinalNewline && !formatted.endsWith(eolStr)) {
+            formatted += eolStr;
+        }
 
         // 避免不必要的编辑操作
         const normalize = (str: string) => str.replace(/\r\n/g, '\n').trim();
