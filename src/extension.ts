@@ -2,6 +2,8 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { Worker } from 'worker_threads';
+import { deepDecodeUnicode } from './shared/decode';
+import { type ParseResult, tryParseFlexible } from "./shared/parseJson";
 
 // worker 执行解析的超时时间
 const WORKER_PARSE_TIMEOUT_MS = 2000
@@ -50,51 +52,6 @@ export function activate(context: vscode.ExtensionContext) {
             if (byteLen > MAX_INPUT_BYTES) {
                 vscode.window.showErrorMessage(`输入过大：${Math.round(byteLen / 1024)} KB，超过限制 ${Math.round(MAX_INPUT_BYTES / 1024)} KB，已取消操作。`);
                 return;
-            }
-        }
-
-        // 定义解析结果的数据类型
-        type ParseResult = { value: any | null; error?: Error; finalText?: string };
-
-        // 本地的解析器
-        function tryParseFlexible(input: string, maxDepth = 6): ParseResult {
-            let s = input;
-            let lastErr: Error | undefined;
-
-            for (let i = 0; i < maxDepth; i++) {
-                s = s.trim();
-                // 直接尝试解析对象/数组开头的情况
-                if (/^[\{\[]/.test(s)) {
-                    try {
-                        return { value: JSON.parse(s), finalText: s };
-                    } catch (e) {
-                        lastErr = e as Error;
-                        // 继续尝试反转义
-                    }
-                }
-
-                // 去掉外层引号
-                if (/^"(.*)"$/.test(s)) {
-                    s = s.slice(1, -1);
-                }
-
-                // 常见反转义（一次替换）
-                const replaced = s.replace(/\\\\/g, '\\')
-                    .replace(/\\"/g, '"')
-                    .replace(/\\n/g, '\n')
-                    .replace(/\\r/g, '\r')
-                    .replace(/\\t/g, '\t');
-
-                if (replaced === s) break;
-
-                s = replaced;
-            }
-            
-            try {
-                return { value: JSON.parse(s), finalText: s };
-            } catch (e) {
-                lastErr = e as Error;
-                return { value: null, error: lastErr, finalText: s };
             }
         }
 
@@ -160,6 +117,7 @@ export function activate(context: vscode.ExtensionContext) {
                         resolve({ value: null, error: new Error('解析超时（回退）'), finalText: input });
                     }, WORKER_PARSE_TIMEOUT_MS);
 
+                    // 如果worker中解析json失败，就回到主线程解析
                     Promise.resolve().then(() => {
                         try {
                             const r = tryParseFlexible(input, 6);
@@ -214,7 +172,9 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         const parsed = parseResult.value;
-        const formatted = JSON.stringify(parsed, null, 4);
+        const decoded = deepDecodeUnicode(parsed); // 还原 Unicode
+
+        const formatted = JSON.stringify(decoded, null, 4); // 用还原后的结果输出
 
         // 避免不必要的编辑操作
         const normalize = (str: string) => str.replace(/\r\n/g, '\n').trim();
