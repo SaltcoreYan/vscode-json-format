@@ -63,12 +63,24 @@ export function activate(context: vscode.ExtensionContext) {
         let parseResult: ParseResult;
 
         const trimmedText = text;
-        const startStr = trimmedText.slice(0, 5).toLowerCase();
-        if (startStr == "array") {
+
+        const regex = /({)|(array)/i;
+        const match = trimmedText.match(regex);
+
+        if (!match) {
+            vscode.window.showInformationMessage('不支持此数据格式。');
+            return;
+        }
+
+        if (match[1]) {
+            // 说明是json
+            parseResult = await parseJson(text);
+        } else if (match[2]) {
+            // 说明是array
             parseResult = await parseArray(text);
         } else {
-            // 调用封装的解析函数
-            parseResult = await parseJson(text);
+            vscode.window.showInformationMessage('解析有误。');
+            return;
         }
 
         if (parseResult.value === null) {

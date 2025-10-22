@@ -3,12 +3,19 @@
  * 支持格式如: array ( 'key' => 'value', 'nested' => array ( ... ) )
  */
 export function parsePhpArray(phpStr: string): any {
-    const trimmed = phpStr.trim();
-    const startStr = trimmed.slice(0, 5).toLowerCase();
-    if (startStr != "array") {
-        throw new Error('Invalid PHP array format');
+    // let trimmed = phpStr.trim();
+    // const startStr = trimmed.slice(0, 5).toLowerCase();
+    // if (startStr != "array") {
+    //     throw new Error('Invalid PHP array format');
+    // }
+
+    // 删除第一个array前面的内容，以及最后一个 ) 后面的内容
+    const match = phpStr.match(/array[\s\S]*\)/);
+    if (match) {
+        phpStr = match[0];
     }
-    const inner = trimmed.slice(8, -1).trim();
+
+    const inner = phpStr.slice(8, -1).trim();
     return parseObject(inner);
 }
 

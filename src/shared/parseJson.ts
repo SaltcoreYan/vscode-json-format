@@ -17,6 +17,15 @@ export function tryParseFlexible(input: string, maxDepth = 6): ParseResult {
     let s = input;
     let lastErr: Error | undefined;
 
+    // 去除{ } 前后的内容
+    const match = s.match(/{[\s\S]*}/);
+    if (match) {
+        s = match[0];
+    }
+    
+    // 处理字符串之前，压缩多个反斜杠紧邻引号为 \"（避免后续外层引号判断被多反斜杠干扰）
+    s = s.replace(/\\+\"/g, '\\"');
+
     for (let i = 0; i < maxDepth; i++) {
         s = s.trim();
 
