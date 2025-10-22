@@ -2,7 +2,7 @@
   "name": "json-format-sortcore",
   "displayName": "JSON Format (SaltcoreYan)",
   "description": "Format and normalize JSON/JSON-like content",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "icon": "images/icon.png",
   "publisher": "saltcoreyan",
   "license": "Apache-2.0",
