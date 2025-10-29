@@ -1,44 +1,28 @@
 # json-format
 
-Format and normalize JSON or JSON-like strings in the editor.
+在编辑器中解析并格式化 JSON/类 JSON 文本。
 
-Features:
-- Flexible parsing: raw JSON, JSON in escaped strings, multi-layer escapes.
-- Unicode unescaping: restore \uXXXX and surrogate pairs.
-- JSONC tolerant (optional in parser): comments and trailing commas.
-- Fast path for small inputs; worker offloading for large/complex cases.
-- Honors editor indentation (tabSize/insertSpaces) and EOL.
-- Size limit to avoid blocking (configurable).
+示例：
+- 格式化json字符串，可以识别“{”与“}”之间的内容
+![](./images/format_json.gif)
 
-Command:
-- json-format: 格式化 JSON (Default: Ctrl+Alt+J)
+- 将php打印出的数组字符串，格式化为json字符串，可以识别“array(”与“)”之间的内容
+![](./images/format_array.gif)
 
-Settings:
-- json-format.maxInputSizeMB (number, default 2): Max input size in MB. 0 = unlimited.
-- json-format.decodeUnicode (boolean, default true): Whether to unescape Unicode sequences.
+功能：
+- 灵活解析：原始 JSON、被转义包裹的 JSON、多层转义。
+- Unicode 还原：支持 \uXXXX 与代理对。
+- 可容错（可选）：支持注释与尾逗号（JSONC）。
+- 小输入走主线程快速路径，大输入用 worker 分流。
+- 遵循编辑器缩进与换行。
+- 输入大小限制，避免阻塞（可配置）。
 
-Usage:
-- Select a region or run the command on the whole file. The extension parses, decodes, and formats the JSON.
+命令：
+- json-format: 格式化 JSON（默认快捷键：Ctrl+Alt+J）
 
----
+设置：
+- json-format.maxInputSizeMB（number，默认 2）：最大解析输入大小（MB）。0 表示不限制。
+- json-format.decodeUnicode（boolean，默认 true）：是否还原 Unicode 转义。
 
-## Following extension guidelines
-
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
-
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+使用方式：
+- 选中文本或直接对整文件运行命令，扩展会解析、还原并格式化输出。
