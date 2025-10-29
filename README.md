@@ -1,6 +1,6 @@
 # json-format
 
-在编辑器中解析并格式化 JSON/类 JSON 文本。
+在编辑器中解析并格式化 JSON/类 JSON 文本。[vscode插件地址](https://marketplace.visualstudio.com/items?itemName=saltcoreyan.json-format-sortcore)
 
 示例：
 - 格式化json字符串，可以识别“{”与“}”之间的内容
