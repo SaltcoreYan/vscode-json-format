@@ -20,6 +20,9 @@ export function parsePhpArray(phpStr: string): any {
 }
 
 function parseObject(str: string): any {
+    // 预处理：将所有 "NULL" 或 "Null" 替换为 "null"
+    str = str.replace(/NULL/g, 'null').replace(/Null/g, 'null');
+    
     const result: any = {};
     let i = 0;
 
