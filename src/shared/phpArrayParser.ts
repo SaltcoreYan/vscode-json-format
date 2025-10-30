@@ -22,6 +22,8 @@ export function parsePhpArray(phpStr: string): any {
 function parseObject(str: string): any {
     // 预处理：将所有 "NULL" 或 "Null" 替换为 "null"
     str = str.replace(/NULL/g, 'null').replace(/Null/g, 'null');
+    // 预处理：将 "(object) array (" 替换为 "array ("，并将 "array(" 替换为 "array ("
+    str = str.replace(/array\(/g, 'array (').replace(/\(object\) array \(/g, 'array (');
     
     const result: any = {};
     let i = 0;
@@ -135,14 +137,32 @@ function parseArray(str: string, start: number): { value: any; end: number } {
     if (str[i] !== '(') throw new Error(`Expected '(' after 'array' at position ${i}`);
     i++; // 跳过 (
 
-    // 找到匹配的 )
+    // 找到匹配的 )，但要跳过字符串内部的括号
     let depth = 1;
     let startInner = i;
+    let inString = false;
+    
     while (i < str.length && depth > 0) {
-        if (str[i] === '(') depth++;
-        else if (str[i] === ')') depth--;
+        if (!inString) {
+            if (str[i] === "'") {
+                inString = true;
+            } else if (str[i] === '(') {
+                depth++;
+            } else if (str[i] === ')') {
+                depth--;
+            }
+        } else {
+            // 在字符串内部
+            if (str[i] === "'") {
+                // 检查是否是转义的引号
+                if (i > 0 && str[i - 1] !== '\\') {
+                    inString = false;
+                }
+            }
+        }
         i++;
     }
+    
     if (depth !== 0) throw new Error(`Unmatched parentheses in array at position ${start}`);
     
     // 提取内部内容并解析
